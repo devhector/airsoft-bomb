@@ -14,7 +14,7 @@ LiquidCrystal lcd(14, 15, 16, 17, 18, 19);
 
 const int PIN_GREEN  = 11;
 const int PIN_BUZZER = 10;
-const int PIN_CARD   = 13;   // Chave/cartão: INPUT_PULLUP, LOW = encaixado
+const int PIN_CARD   = 12;   // Chave/cartão: INPUT_PULLUP, LOW = encaixado
 
 // ─── Teclado ──────────────────────────────────────────────────────────────────
 const byte ROWS = 4, COLS = 4;
@@ -65,7 +65,8 @@ enum State {
   ST_CARD_DEFUSING,
   ST_DISARMED,
   ST_EXPLODED,
-  ST_RESET
+  ST_RESET,
+  ST_DEBUG_PINS
 };
 
 State        currentState  = ST_SPLASH;
@@ -198,13 +199,17 @@ void stateSplash() {
     lcdMsg("    CERBERUS   ", "Airsoft Division");
     unsigned long t = millis();
     while (millis() - t < 3000) {
-      if (keypad.getKey() == '#') { currentState = ST_SELECT_MODE; return; }
+      char k = keypad.getKey();
+      if (k == '#') { currentState = ST_SELECT_MODE; return; }
+      if (k == 'D') { currentState = ST_DEBUG_PINS;  return; }
     }
 
     lcdMsg("SEGURE # P/", "CONTINUAR");
     t = millis();
     while (millis() - t < 2000) {
-      if (keypad.getKey() == '#') { currentState = ST_SELECT_MODE; return; }
+      char k = keypad.getKey();
+      if (k == '#') { currentState = ST_SELECT_MODE; return; }
+      if (k == 'D') { currentState = ST_DEBUG_PINS;  return; }
     }
   }
 }
@@ -671,11 +676,6 @@ void stateReset() {
         lcd.setCursor(0, 1);
         lcd.print("EXPLODIU!");
       }
-    } else {
-      lcd.setCursor(0, 0);
-      lcd.print("Aperte D");
-      lcd.setCursor(0, 1);
-      lcd.print("para resetar");
     }
 
     delay(50);
@@ -699,8 +699,81 @@ void stateReset() {
   currentState = ST_SPLASH;
 }
 
+// ─── Estado: debug de pinos digitais ──────────────────────────────────────────
+void stateDebugPins() {
+  const int debugPins[4] = {10, 11, 12, 13};
+  int lastState[4];
+
+  // Coloca todos os pinos como entrada com pull-up interno para o teste
+  for (int i = 0; i < 4; i++) {
+    pinMode(debugPins[i], INPUT_PULLUP);
+    lastState[i] = digitalRead(debugPins[i]);
+  }
+
+  Serial.println("=== MODO DEBUG DE PINOS ===");
+  Serial.println("Pressione * para sair");
+  for (int i = 0; i < 4; i++) {
+    Serial.print("P"); Serial.print(debugPins[i]);
+    Serial.print(" inicial: "); Serial.println(lastState[i]);
+  }
+
+  lcd.clear();
+
+  while (true) {
+    char k = keypad.getKey();
+    if (k == '*') {
+      // Restaura os pinos para seus usos normais
+      pinMode(PIN_GREEN,  OUTPUT);
+      pinMode(PIN_CARD,   INPUT_PULLUP);
+      resetLeds();
+      lcd.clear();
+      currentState = ST_SPLASH;
+      return;
+    }
+
+    bool changed = false;
+
+    for (int i = 0; i < 4; i++) {
+      int val = digitalRead(debugPins[i]);
+      if (val != lastState[i]) {
+        changed = true;
+        Serial.print(">>> MUDANCA no pino ");
+        Serial.print(debugPins[i]);
+        Serial.print(": ");
+        Serial.print(lastState[i]);
+        Serial.print(" -> ");
+        Serial.print(val);
+        Serial.print("  (t=");
+        Serial.print(millis());
+        Serial.println("ms)");
+
+        lastState[i] = val;
+      }
+    }
+
+    // Atualiza o LCD sempre, mostrando o estado atual dos 4 pinos
+    lcd.setCursor(0, 0);
+    lcd.print("P10:"); lcd.print(lastState[0]);
+    lcd.print(" P11:"); lcd.print(lastState[1]);
+    lcd.print("    ");
+
+    lcd.setCursor(0, 1);
+    lcd.print("P12:"); lcd.print(lastState[2]);
+    lcd.print(" P13:"); lcd.print(lastState[3]);
+    lcd.print(changed ? " *" : "  ");
+
+    delay(50);
+  }
+}
+
 // ─── Despacho por modo de jogo ────────────────────────────────────────────────
 void runCurrentMode() {
+  
+  if (currentState == ST_DEBUG_PINS) {
+    stateDebugPins();
+    return;
+  }
+
   switch (currentMode) {
 
     case MODE_CARD:
@@ -742,6 +815,8 @@ void runCurrentMode() {
 
 // ─── Arduino entry points ─────────────────────────────────────────────────────
 void setup() {
+  Serial.begin(9600);
+  
   pinMode(PIN_GREEN,  OUTPUT);
   pinMode(PIN_CARD,   INPUT_PULLUP);
   resetLeds();
